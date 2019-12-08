@@ -1,13 +1,7 @@
-import Popper from 'vue-popperjs';
-import 'vue-popperjs/dist/vue-popper.css';
-import { filter } from '../filters.js';
-import Row from '../classes/Row';
-import axios from 'axios';
-import Column from '../classes/Column';
+import {EventBus} from '../event-bus';
+import DatatableFilterMixin from './DatatableFilterMixin';
 
 export default {
-    mixins: ['filter'],
-
     props: {
         query: { type: String, required: true },
         inject: { type: Object },
@@ -19,13 +13,11 @@ export default {
         hideItemsPerPage: { type: Boolean, default: false, },
     },
 
-    components: {
-        'popper': Popper
-    },
+    mixins: [DatatableFilterMixin],
 
     data () {
         return {
-            columns: [],
+            // columns: [],
             rows: [],
             loading: false,
             data: {},
@@ -39,12 +31,16 @@ export default {
             requiresSearch: false,
             requiresSearchLength: 1,
 
+            // filtering
             selectedFilters: {},
 
             // Sorting
             sortable: false,
             sortableColumns: [],
             currentSorting: {column: null, direction: null},
+
+            // exp
+            columnsNew: [],
         }
     },
 
@@ -60,63 +56,102 @@ export default {
         }
     },
 
-    computed: {
-        canSeeFilters () {
-            return Manjana.user.role.name === 'president' || Manjana.user.role.name === 'vice-president';
-        }
-    },
-
     async mounted () {
         await this.getResults();
 
         this.perPage = this.itemsPerPage;
 
-        const columnComponents = this.$slots.default
-            .filter(column => column.componentInstance)
-            .map(column => column.componentInstance);
-
-        this.columns = columnComponents.map(
-            column => new Column(column)
-        );
-
-        // this.filterableColumns = collect(this.columns).filter(column => {
-        //     return column.isFilterable();
-        // }).toArray();
-
-        // this.filters = collect(this.filterableColumns).mapWithKeys(column => {
-        //     return [column.show, []];
-        // }).all();
-
-        columnComponents.forEach(columnCom => {
-            Object.keys(columnCom.$options.props).forEach(
-                prop => columnCom.$watch(prop, () => {
-                    this.columns = columnComponents.map(
-                        column => new Column(column)
-                    );
-                })
-            );
+        EventBus.$on(['datatable:filters-applied'], () => {
+            this.getResults();
         });
 
-        this.mapDataToRows();
+        EventBus.$on(['datatable:filter-input'], (filter, value) => {
+            this.$set(this.selectedFilters, filter.name, value);
+        });
 
-        if (this.$refs.dataTableFilters) {
-            this.$refs.dataTableFilters.$on(['datatable:reset-filters', 'datatable:apply-filters'], () => {
-                this.getResults();
-            });
-
-            this.$refs.dataTableFilters.$on('datatable:input', () => {
-                this.selectedFilters = this.$refs.dataTableFilters.getFilterStatuses();
-            });
-        }
+        EventBus.$on(['datatable:filters-resetted'], () => {
+            this.selectedFilters = {};
+            this.getResults();
+        });
     },
 
     methods: {
-        isSortable (column) {
-            return this.sortableColumns.includes(column.show);
+        /**
+         * Retrive the columns.
+         *
+         * @return Array
+         */
+        columns () {
+            return this.columnsNew;
         },
 
-        changeItemsPerPage () {
+
+        /**
+         * Determine if we are using pagination.
+         *
+         * @return Boolean
+         */
+        isUsingPagination () {
+            return this.pagination;
+        },
+
+
+        /**
+         * Determine if there is any rows to show.
+         *
+         * @return Boolean
+         */
+        hasRows () {
+            return this.getData().length > 0;
+        },
+
+
+        /**
+         * Execute when items per page value is changed.
+         *
+         * @return void
+         */
+        itemsPerPageChanged () {
             this.getResults();
+        },
+
+
+        /**
+         * Determine if column is sorted given direction.
+         *
+         * @return Boolean
+         */
+        columnIsSorted (column, direction) {
+            return this.currentSorting.column === column['column'] &&
+                   this.currentSorting.direction === direction;
+        },
+
+        /**
+         * Retrive the row-column value.
+         *
+         * @param  Object row
+         * @param  Object column
+         * @return mixed
+         */
+        rowColumnValue (row, column) {
+            var value = row[column.column];
+
+            // Filter the value with given vue filters.
+            if (column.vue && column.vue.filters) {
+                column.vue.filters.forEach((filter) => {
+                    value = this.$options.filters[filter](value);
+                });
+            }
+
+            return value;
+        },
+
+
+
+
+        // FIX BELOW
+        isSortable (column) {
+            return this.sortableColumns.includes(column.show);
         },
 
         toggleSortForColumn (column) {
@@ -156,13 +191,16 @@ export default {
                 this.sortableColumns = response.data.sort.fields;
                 this.sortable = response.data.sort.enabled;
 
-                this.filterable = response.data.filter.enabled;
-                this.filters = response.data.filter.filters;
+                // this.filterable = response.data.filter.enabled;
+
+                this.filters = response.data.filters;
 
                 this.requiresSearch = response.data.requiresSearch;
                 this.requiresSearchLength = response.data.requiresSearchLength;
 
-                this.mapDataToRows();
+                this.rows = response.data.items.data;
+
+                this.columnsNew = response.data.columns;
 
                 this.loading = false;
             });
@@ -178,22 +216,7 @@ export default {
             this.getResults();
         },
 
-        mapDataToRows () {
-            let rowId = 0;
-
-            this.rows = this.getData().map(rowData => {
-                rowData.vueTableComponentInternalRowId = rowId++;
-                return rowData;
-            }).map(rowData =>
-                new Row(rowData, this.columns)
-            );
-        },
-
         search: function(query) {
-            // if (this.requiresSearch && this.searchString.length < this.requiresSearchLength) {
-            //     return false;
-            // }
-
             this.getResults();
         }
     }
