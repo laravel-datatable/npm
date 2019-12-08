@@ -1,1 +1,1 @@
-# npm
+# laravel-datatable
