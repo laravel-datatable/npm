@@ -82,7 +82,7 @@ export default {
          * @return Array
          */
         columns () {
-            return this.columnsNew;
+            return _.filter(this.columnsNew, column => column.label !== false);
         },
 
 
